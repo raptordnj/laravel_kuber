@@ -1,0 +1,67 @@
+---
+# zuus-business scheduler — runs php artisan schedule:run every minute
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: business-scheduler
+  namespace: zuus
+spec:
+  schedule: "* * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: scheduler
+            image: ghcr.io/raptordnj/zuus-business:latest
+            command: ["php", "artisan", "schedule:run", "--no-interaction"]
+            envFrom:
+            - configMapRef:
+                name: business-config
+            - secretRef:
+                name: business-secrets
+            resources:
+              requests:
+                cpu: 50m
+                memory: 128Mi
+              limits:
+                cpu: 500m
+                memory: 256Mi
+
+---
+# zuus-commerce scheduler — runs php artisan schedule:run every minute
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: commerce-scheduler
+  namespace: zuus
+spec:
+  schedule: "* * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: scheduler
+            image: ghcr.io/raptordnj/zuus-commerce:latest
+            command: ["php", "artisan", "schedule:run", "--no-interaction"]
+            envFrom:
+            - configMapRef:
+                name: commerce-config
+            - secretRef:
+                name: commerce-secrets
+            resources:
+              requests:
+                cpu: 50m
+                memory: 128Mi
+              limits:
+                cpu: 500m
+                memory: 256Mi

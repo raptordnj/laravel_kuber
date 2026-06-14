@@ -1,0 +1,218 @@
+---
+# MariaDB init script — creates the three databases and grants zuus user access
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mariadb-init
+  namespace: zuus
+data:
+  init.sql: |
+    CREATE DATABASE IF NOT EXISTS `zuus_business`;
+    CREATE DATABASE IF NOT EXISTS `tenant_central`;
+    CREATE DATABASE IF NOT EXISTS `tenant_template`;
+    GRANT ALL PRIVILEGES ON `zuus_business`.*    TO 'zuus'@'%';
+    GRANT ALL PRIVILEGES ON `tenant_central`.*   TO 'zuus'@'%';
+    GRANT ALL PRIVILEGES ON `tenant_template`.*  TO 'zuus'@'%';
+    FLUSH PRIVILEGES;
+
+---
+# Nginx sidecar config for zuus-business pods
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: business-nginx-config
+  namespace: zuus
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name _;
+        client_max_body_size 64m;
+
+        root /shared/public;
+        index index.php index.html;
+
+        add_header X-Frame-Options "SAMEORIGIN";
+        add_header X-Content-Type-Options "nosniff";
+
+        location / {
+            try_files $uri $uri/ /index.php?$query_string;
+        }
+
+        location = /favicon.ico { access_log off; log_not_found off; }
+        location = /robots.txt  { access_log off; log_not_found off; }
+
+        location ~ \.php$ {
+            fastcgi_pass 127.0.0.1:9000;
+            fastcgi_index index.php;
+            include fastcgi_params;
+            # SCRIPT_FILENAME points to PHP-FPM container's path
+            fastcgi_param SCRIPT_FILENAME /var/www/html/public$fastcgi_script_name;
+            fastcgi_param DOCUMENT_ROOT   /var/www/html/public;
+            fastcgi_read_timeout 300;
+        }
+
+        location ~ /\.(?!well-known).* { deny all; }
+    }
+
+---
+# Nginx sidecar config for zuus-commerce pods
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: commerce-nginx-config
+  namespace: zuus
+data:
+  default.conf: |
+    server {
+        listen 80;
+        server_name _;
+        client_max_body_size 64m;
+
+        root /shared/public;
+        index index.php index.html;
+
+        add_header X-Frame-Options "SAMEORIGIN";
+        add_header X-Content-Type-Options "nosniff";
+
+        location / {
+            try_files $uri $uri/ /index.php?$query_string;
+        }
+
+        location = /favicon.ico { access_log off; log_not_found off; }
+        location = /robots.txt  { access_log off; log_not_found off; }
+
+        location ~ \.php$ {
+            fastcgi_pass 127.0.0.1:9000;
+            fastcgi_index index.php;
+            include fastcgi_params;
+            fastcgi_param SCRIPT_FILENAME /var/www/html/public$fastcgi_script_name;
+            fastcgi_param DOCUMENT_ROOT   /var/www/html/public;
+            fastcgi_read_timeout 300;
+        }
+
+        location ~ /\.(?!well-known).* { deny all; }
+    }
+
+---
+# zuus-business non-sensitive environment config
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: business-config
+  namespace: zuus
+data:
+  APP_NAME: "Zuus"
+  APP_ENV: "production"
+  APP_DEBUG: "false"
+  APP_URL: "https://zuus.example.com"
+  APP_LOCALE: "en"
+  APP_FALLBACK_LOCALE: "en"
+
+  BASE_DOMAIN: "example.com"
+  CENTRAL_DOMAIN: "zuus.example.com"
+  CUSTOMER_PANEL_DOMAIN: "my.example.com"
+  ADMIN_PANEL_DOMAIN: "admin.example.com"
+
+  DB_CONNECTION: "mysql"
+  DB_HOST: "mariadb"
+  DB_PORT: "3306"
+  DB_DATABASE: "zuus_business"
+  DB_USERNAME: "zuus"
+
+  CENTRAL_DB_DATABASE: "zuus_business"
+
+  SESSION_DRIVER: "file"
+  BROADCAST_CONNECTION: "log"
+  FILESYSTEM_DISK: "local"
+  QUEUE_CONNECTION: "redis"
+  QUEUE_ENTERPRISE_CONNECTION: "redis"
+  CACHE_STORE: "redis"
+
+  REDIS_CLIENT: "phpredis"
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+
+  LOG_CHANNEL: "stack"
+  LOG_STACK: "single"
+  LOG_LEVEL: "error"
+
+  PULSE_ENABLED: "true"
+  PULSE_CACHE_DRIVER: "redis"
+  PULSE_INGEST_DRIVER: "redis"
+  PULSE_REDIS_CONNECTION: "default"
+
+  MAIL_MAILER: "smtp"
+  MAIL_HOST: "CHANGE_ME"
+  MAIL_PORT: "587"
+  MAIL_FROM_ADDRESS: "hello@example.com"
+  MAIL_FROM_NAME: "Zuus"
+
+  GOOGLE_RECAPTCHA_ENABLED: "false"
+
+---
+# zuus-commerce non-sensitive environment config
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: commerce-config
+  namespace: zuus
+data:
+  APP_NAME: "Zuus Commerce"
+  APP_ENV: "production"
+  APP_DEBUG: "false"
+  APP_URL: "https://store.example.com"
+  APP_LOCALE: "en"
+  APP_FALLBACK_LOCALE: "en"
+
+  CENTRAL_DB_CONNECTION: "central"
+  CENTRAL_DB_HOST: "mariadb"
+  CENTRAL_DB_PORT: "3306"
+  CENTRAL_DB_DATABASE: "tenant_central"
+  CENTRAL_DB_USERNAME: "zuus"
+
+  TENANT_TEMPLATE_DB_CONNECTION: "tenant_template"
+  TENANT_TEMPLATE_DB_HOST: "mariadb"
+  TENANT_TEMPLATE_DB_PORT: "3306"
+  TENANT_TEMPLATE_DB_DATABASE: "tenant_template"
+  TENANT_TEMPLATE_DB_USERNAME: "zuus"
+
+  SESSION_DRIVER: "redis"
+  SESSION_CONNECTION: "default"
+  BROADCAST_CONNECTION: "log"
+  FILESYSTEM_DISK: "public_storage"
+  QUEUE_CONNECTION: "redis"
+  QUEUE_ENTERPRISE_CONNECTION: "redis"
+  QUEUE_FAILED_DRIVER: "database-uuids"
+  QUEUE_BATCHING_DB_CONNECTION: "central"
+  QUEUE_FAILED_DB_CONNECTION: "central"
+  CACHE_STORE: "redis"
+  CACHE_DRIVER: "redis"
+
+  REDIS_CLIENT: "phpredis"
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  REDIS_QUEUE_CONNECTION: "default"
+  REDIS_QUEUE: "default"
+  REDIS_TENANT_QUEUE: "default"
+  REDIS_CENTRAL_QUEUE: "central"
+
+  TENANCY_RESOLVER_CACHE: "true"
+  TENANCY_RESOLVER_CACHE_STORE: "redis"
+  TENANCY_RESOLVER_CACHE_TTL: "3600"
+
+  LOG_CHANNEL: "stack"
+  LOG_STACK: "single"
+  LOG_LEVEL: "error"
+
+  MAIL_MAILER: "smtp"
+  MAIL_HOST: "CHANGE_ME"
+  MAIL_PORT: "587"
+  MAIL_FROM_ADDRESS: "hello@example.com"
+  MAIL_FROM_NAME: "Zuus Commerce"
+
+  CORS_ALLOWED_ORIGINS: "https://zuus.example.com,https://my.example.com,https://admin.example.com,https://store.example.com"
+
+  TELESCOPE_ENABLED: "false"
+  TELESCOPE_DB_CONNECTION: "central"
+  DEBUGBAR_ENABLED: "false"

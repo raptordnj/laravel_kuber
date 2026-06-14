@@ -1,0 +1,83 @@
+---
+# zuus-business queue worker
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: business-queue
+  namespace: zuus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: business-queue
+  template:
+    metadata:
+      labels:
+        app: business-queue
+    spec:
+      containers:
+      - name: queue-worker
+        image: ghcr.io/raptordnj/zuus-business:latest
+        command:
+        - php
+        - artisan
+        - queue:work
+        - --queue=high.billing,high.integrations,default.application,cpu.billing,low.mail,low.notification
+        - --tries=1
+        - --timeout=90
+        - --sleep=3
+        - --max-jobs=1000
+        envFrom:
+        - configMapRef:
+            name: business-config
+        - secretRef:
+            name: business-secrets
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+
+---
+# zuus-commerce queue worker
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: commerce-queue
+  namespace: zuus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: commerce-queue
+  template:
+    metadata:
+      labels:
+        app: commerce-queue
+    spec:
+      containers:
+      - name: queue-worker
+        image: ghcr.io/raptordnj/zuus-commerce:latest
+        command:
+        - php
+        - artisan
+        - queue:work
+        - --queue=central,default
+        - --tries=1
+        - --timeout=90
+        - --sleep=1
+        - --max-jobs=1000
+        envFrom:
+        - configMapRef:
+            name: commerce-config
+        - secretRef:
+            name: commerce-secrets
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi

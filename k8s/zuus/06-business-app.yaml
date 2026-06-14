@@ -1,0 +1,122 @@
+---
+# zuus-business — PHP-FPM + nginx sidecar, replicated
+# Build image: docker build -f Dockerfile.business -t ghcr.io/raptordnj/zuus-business:latest .
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: business-app
+  namespace: zuus
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: business-app
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: business-app
+    spec:
+      initContainers:
+
+      # Run migrations once per rollout (Laravel migration lock prevents races)
+      - name: migrate
+        image: ghcr.io/raptordnj/zuus-business:latest
+        command: ["php", "artisan", "migrate", "--force"]
+        envFrom:
+        - configMapRef:
+            name: business-config
+        - secretRef:
+            name: business-secrets
+
+      # Copy public/ into shared volume so nginx can serve static assets directly
+      - name: copy-public
+        image: ghcr.io/raptordnj/zuus-business:latest
+        command: ["sh", "-c", "cp -a /var/www/html/public/. /shared/public/"]
+        volumeMounts:
+        - name: shared-public
+          mountPath: /shared/public
+
+      containers:
+
+      # PHP-FPM — serves all dynamic requests
+      - name: php-fpm
+        image: ghcr.io/raptordnj/zuus-business:latest
+        ports:
+        - containerPort: 9000
+        envFrom:
+        - configMapRef:
+            name: business-config
+        - secretRef:
+            name: business-secrets
+        resources:
+          requests:
+            cpu: 250m
+            memory: 256Mi
+          limits:
+            cpu: "1"
+            memory: 512Mi
+        livenessProbe:
+          tcpSocket:
+            port: 9000
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          tcpSocket:
+            port: 9000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+
+      # Nginx sidecar — serves static files & reverse-proxies PHP to 127.0.0.1:9000
+      - name: nginx
+        image: nginx:1.27-alpine
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: nginx-config
+          mountPath: /etc/nginx/conf.d
+        - name: shared-public
+          mountPath: /shared/public
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+        readinessProbe:
+          httpGet:
+            path: /up
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /up
+            port: 80
+          initialDelaySeconds: 15
+          periodSeconds: 20
+
+      volumes:
+      - name: shared-public
+        emptyDir: {}
+      - name: nginx-config
+        configMap:
+          name: business-nginx-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: business-app
+  namespace: zuus
+spec:
+  selector:
+    app: business-app
+  ports:
+  - port: 80
+    targetPort: 80

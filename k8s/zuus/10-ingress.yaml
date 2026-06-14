@@ -1,0 +1,67 @@
+---
+# Requires nginx ingress controller: kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.11.0/deploy/static/provider/cloud/deploy.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: zuus-ingress
+  namespace: zuus
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "64m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    # Uncomment for TLS with cert-manager:
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: nginx
+  rules:
+  # zuus-business — main, customer portal, admin panel
+  - host: zuus.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: business-app
+            port:
+              number: 80
+  - host: my.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: business-app
+            port:
+              number: 80
+  - host: admin.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: business-app
+            port:
+              number: 80
+
+  # zuus-commerce — multi-tenant storefront
+  - host: store.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: commerce-app
+            port:
+              number: 80
+
+  # tls:
+  # - hosts:
+  #   - zuus.example.com
+  #   - my.example.com
+  #   - admin.example.com
+  #   - store.example.com
+  #   secretName: zuus-tls

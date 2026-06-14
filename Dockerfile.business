@@ -1,0 +1,54 @@
+# ── Stage 1: Frontend assets ──────────────────────────────────────────────────
+FROM node:22-alpine AS node-builder
+WORKDIR /workspace
+
+COPY zuus/package.json zuus/yarn.lock ./
+COPY zuus/apps/zuus-business/package.json ./apps/zuus-business/
+COPY zuus/packages/js/ui/package.json   ./packages/js/ui/
+RUN yarn install --frozen-lockfile
+
+COPY zuus/apps/zuus-business ./apps/zuus-business
+COPY zuus/packages/js/ui     ./packages/js/ui
+RUN yarn --cwd apps/zuus-business build
+
+# ── Stage 2: PHP dependencies ──────────────────────────────────────────────────
+FROM composer:2 AS vendor
+WORKDIR /app
+COPY zuus/apps/zuus-business .
+RUN composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader --no-scripts
+
+# ── Stage 3: Runtime ───────────────────────────────────────────────────────────
+FROM php:8.3-fpm-bookworm
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        curl unzip libcurl4-openssl-dev libfreetype6-dev libicu-dev \
+        libjpeg62-turbo-dev libpng-dev libwebp-dev libxpm-dev libzip-dev \
+    && docker-php-ext-configure gd --with-freetype --with-jpeg --with-webp --with-xpm \
+    && docker-php-ext-install -j"$(nproc)" bcmath exif gd intl opcache pcntl pdo_mysql zip \
+    && pecl install redis \
+    && docker-php-ext-enable redis \
+    && rm -rf /tmp/pear /var/lib/apt/lists/*
+
+COPY zuus/docker/php/conf.d/app.ini /usr/local/etc/php/conf.d/zzz-app.ini
+COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
+
+WORKDIR /var/www/html
+
+COPY zuus/apps/zuus-business .
+COPY --from=vendor /app/vendor                                      ./vendor
+COPY --from=node-builder /workspace/apps/zuus-business/public/build ./public/build
+
+RUN php artisan package:discover --ansi \
+    && mkdir -p storage/framework/{sessions,views,cache} storage/logs bootstrap/cache \
+    && chown -R www-data:www-data storage bootstrap/cache \
+    && chmod -R 775 storage bootstrap/cache
+
+COPY docker/php/startup.sh /usr/local/bin/startup.sh
+RUN chmod +x /usr/local/bin/startup.sh
+
+EXPOSE 9000
+ENTRYPOINT ["/usr/local/bin/startup.sh"]
+CMD ["php-fpm"]
