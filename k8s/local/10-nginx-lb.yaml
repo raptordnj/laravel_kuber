@@ -1,0 +1,147 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-lb-config
+  namespace: laravel-local
+data:
+  nginx.conf: |
+    worker_processes auto;
+    worker_rlimit_nofile 65535;
+
+    events {
+        worker_connections 4096;
+        use epoll;
+        multi_accept on;
+    }
+
+    http {
+        resolver 10.96.0.10 valid=10s ipv6=off;   # CoreDNS ClusterIP (not a hostname — nginx resolves the resolver at startup)
+
+        # Connection limiting only — NO per-IP request-rate cap, so load
+        # reaches the backend and HPA can scale. "Overloaded" is signaled by
+        # actual pod saturation (upstream 502/503/504), not an arbitrary rate.
+        limit_conn_zone $binary_remote_addr zone=conn_ip:10m;
+
+        upstream laravel_backend {
+            least_conn;
+            server laravel-app.laravel-local.svc.cluster.local:80;
+            keepalive 64;
+        }
+
+        # JSON overload response
+        map $status $overload_body {
+            default '';
+            503     '{"error":"server_overloaded","message":"Too many requests. Please retry shortly.","status":503}';
+            502     '{"error":"bad_gateway","message":"Application unavailable. Please retry shortly.","status":502}';
+            504     '{"error":"gateway_timeout","message":"Request timed out. Please retry shortly.","status":504}';
+        }
+
+        server {
+            listen 80;
+            access_log off;
+
+            # Return JSON for all upstream errors
+            error_page 502 503 504 = @overloaded;
+
+            location @overloaded {
+                default_type application/json;
+                return 503 '{"error":"server_overloaded","message":"Too many requests. Please retry shortly.","status":503}';
+            }
+
+            location /nginx-health {
+                return 200 '{"status":"ok"}';
+                add_header Content-Type application/json;
+            }
+
+            location / {
+                # Cap concurrent connections per IP high enough to drive full
+                # load across 50 pods (50 pods x 10 workers = 500 in-flight).
+                limit_conn conn_ip 1000;
+                limit_conn_status 503;
+
+                proxy_pass         http://laravel_backend;
+                proxy_http_version 1.1;
+                proxy_set_header   Connection        "";
+                proxy_set_header   Host              $host;
+                proxy_set_header   X-Real-IP         $remote_addr;
+                proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+
+                proxy_connect_timeout 10s;
+                proxy_send_timeout    60s;
+                proxy_read_timeout    60s;
+
+                proxy_next_upstream       error timeout http_500 http_502 http_503;
+                proxy_next_upstream_tries 3;
+            }
+        }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-lb
+  namespace: laravel-local
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx-lb
+  template:
+    metadata:
+      labels:
+        app: nginx-lb
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: nginx-lb
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+          readinessProbe:
+            httpGet:
+              path: /nginx-health
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /nginx-health
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+      volumes:
+        - name: config
+          configMap:
+            name: nginx-lb-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-lb
+  namespace: laravel-local
+spec:
+  type: ClusterIP
+  selector:
+    app: nginx-lb
+  ports:
+    - port: 80
+      targetPort: 80

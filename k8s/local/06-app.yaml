@@ -1,0 +1,173 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: laravel-app
+  namespace: laravel-local
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: laravel-app
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 2
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app: laravel-app
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: laravel-app
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: laravel-app
+                topologyKey: kubernetes.io/hostname
+      initContainers:
+        - name: wait-for-dependencies
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z mysql 3306; do echo waiting for mysql; sleep 2; done
+              until nc -z redis 6379; do echo waiting for redis; sleep 2; done
+              mkdir -p /var/www/html/storage/framework/cache
+              mkdir -p /var/www/html/storage/framework/sessions
+              mkdir -p /var/www/html/storage/framework/views
+              mkdir -p /var/www/html/storage/logs
+              mkdir -p /var/www/html/bootstrap/cache
+              chown -R 33:33 /var/www/html/storage /var/www/html/bootstrap/cache
+          volumeMounts:
+            - name: storage
+              mountPath: /var/www/html/storage
+            - name: cache
+              mountPath: /var/www/html/bootstrap/cache
+      containers:
+        - name: app
+          image: laravel-local:20260610-6
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+          envFrom:
+            - configMapRef:
+                name: laravel-app-config
+            - secretRef:
+                name: laravel-app-secrets
+          command: ["sh", "-c"]
+          args:
+            - |
+              php artisan config:cache || true
+              apache2-foreground
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "96Mi"      # 50 pods x 96Mi = 4.8Gi — fits the node
+            limits:
+              cpu: "500m"
+              memory: "320Mi"     # headroom for 24 workers; observed ~3Mi/req
+          # Readiness: tolerant of transient saturation. A pod must fail for
+          # ~30s before being pulled — long enough for HPA to scale and relieve
+          # load, so pods don't drop out of the metrics pool and stall the HPA.
+          readinessProbe:
+            httpGet:
+              path: /up
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 6
+            successThreshold: 1
+          # Liveness: very lenient — only restart a genuinely dead pod, never
+          # one that's merely busy. ~60s of failure required before restart.
+          livenessProbe:
+            httpGet:
+              path: /up
+              port: 80
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 4
+          volumeMounts:
+            - name: storage
+              mountPath: /var/www/html/storage
+            - name: cache
+              mountPath: /var/www/html/bootstrap/cache
+      volumes:
+        - name: storage
+          emptyDir: {}
+        - name: cache
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: laravel-app
+  namespace: laravel-local
+spec:
+  type: ClusterIP
+  sessionAffinity: None
+  selector:
+    app: laravel-app
+  ports:
+    - port: 80
+      targetPort: 80
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: laravel-app
+  namespace: laravel-local
+spec:
+  minAvailable: 3
+  selector:
+    matchLabels:
+      app: laravel-app
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: laravel-app
+  namespace: laravel-local
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: laravel-app
+  minReplicas: 5
+  maxReplicas: 50
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100        # double pod count...
+          periodSeconds: 15
+        - type: Pods
+          value: 10         # ...or add 10 pods, whichever is more
+          periodSeconds: 15
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 120
+      policies:
+        - type: Pods
+          value: 5
+          periodSeconds: 30

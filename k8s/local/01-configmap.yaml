@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: laravel-app-config
+  namespace: laravel-local
+data:
+  APP_NAME: "Laravel Local"
+  APP_ENV: "local"
+  APP_DEBUG: "true"
+  APP_URL: "http://laravel.localtest.me"
+  LOG_CHANNEL: "stderr"
+  LOG_LEVEL: "debug"
+  DB_CONNECTION: "mysql"
+  DB_HOST: "mysql"
+  DB_PORT: "3306"
+  DB_DATABASE: "laravel"
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  CACHE_STORE: "redis"
+  SESSION_DRIVER: "redis"
+  QUEUE_CONNECTION: "redis"
