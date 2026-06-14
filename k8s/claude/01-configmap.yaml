@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: claude-config
+  namespace: claude
+data:
+  CLAUDE_MODEL: "claude-opus-4-8"
+  CLAUDE_MAX_TOKENS: "8192"
+  PORT: "3000"
+  NODE_ENV: "production"

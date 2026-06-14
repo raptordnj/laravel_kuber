@@ -1,0 +1,31 @@
+# ── Stage 1: build ───────────────────────────────────────────────────────────
+FROM node:22-alpine AS build
+
+WORKDIR /app
+COPY claude-service/package*.json ./
+RUN npm ci --ignore-scripts
+
+COPY claude-service/tsconfig.json ./
+COPY claude-service/src ./src
+RUN npm run build
+
+# Prune devDependencies
+RUN npm prune --omit=dev
+
+# ── Stage 2: runtime ──────────────────────────────────────────────────────────
+FROM node:22-alpine
+
+ENV NODE_ENV=production PORT=3000
+WORKDIR /app
+
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/package.json ./
+
+EXPOSE 3000
+
+# Drop to non-root
+RUN addgroup -S claude && adduser -S claude -G claude
+USER claude
+
+CMD ["node", "dist/index.js"]

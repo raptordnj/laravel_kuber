@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: claude-service
+  namespace: claude
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: claude-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: claude-service
+    spec:
+      containers:
+      - name: claude-service
+        image: ghcr.io/raptordnj/claude-service:latest
+        ports:
+        - containerPort: 3000
+        envFrom:
+        - configMapRef:
+            name: claude-config
+        - secretRef:
+            name: claude-secrets
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 10
+          periodSeconds: 20
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: claude-service
+  namespace: claude
+spec:
+  selector:
+    app: claude-service
+  ports:
+  - port: 80
+    targetPort: 3000

@@ -1,0 +1,31 @@
+---
+# Internal ingress — reachable at api.claude.example.com
+# The zuus apps can also call claude-service.claude.svc.cluster.local/chat directly
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: claude-ingress
+  namespace: claude
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-body-size: "4m"
+    # Uncomment for TLS with cert-manager:
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: api.claude.example.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: claude-service
+            port:
+              number: 80
+  # tls:
+  # - hosts:
+  #   - api.claude.example.com
+  #   secretName: claude-tls
